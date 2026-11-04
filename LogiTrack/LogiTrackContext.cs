@@ -34,6 +34,10 @@ public class LogiTrackContext : IdentityDbContext<ApplicationUser>
         {
             entity.HasKey(o => o.OrderId);
             entity.Property(o => o.CustomerName).IsRequired().HasMaxLength(150);
+            entity.Property(o => o.SessionId).HasMaxLength(100);
+            entity.Property(o => o.CreatedByUserId).HasMaxLength(100);
+            entity.HasIndex(o => o.DatePlaced);
+            entity.HasIndex(o => o.SessionId);
             entity.HasMany(o => o.Items)
                   .WithOne(i => i.Order)
                   .HasForeignKey(i => i.OrderId)
@@ -45,6 +49,8 @@ public class LogiTrackContext : IdentityDbContext<ApplicationUser>
             entity.HasKey(i => i.ItemId);
             entity.Property(i => i.Name).IsRequired().HasMaxLength(150);
             entity.Property(i => i.Location).IsRequired().HasMaxLength(100);
+            entity.HasIndex(i => i.Name);
+            entity.HasIndex(i => i.OrderId);
         });
     }
 }

@@ -111,6 +111,8 @@ namespace LogiTrack.Migrations
 
                     b.HasKey("ItemId");
 
+                    b.HasIndex("Name");
+
                     b.HasIndex("OrderId");
 
                     b.ToTable("InventoryItems");
@@ -122,6 +124,10 @@ namespace LogiTrack.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("CreatedByUserId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("CustomerName")
                         .IsRequired()
                         .HasMaxLength(150)
@@ -130,7 +136,15 @@ namespace LogiTrack.Migrations
                     b.Property<DateTime>("DatePlaced")
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("SessionId")
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
                     b.HasKey("OrderId");
+
+                    b.HasIndex("DatePlaced");
+
+                    b.HasIndex("SessionId");
 
                     b.ToTable("Orders");
                 });

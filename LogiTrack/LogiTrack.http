@@ -1,11 +1,37 @@
-@LogiTrack_HostAddress = http://localhost:5099
+@LogiTrack_HostAddress = http://localhost:5260
+@BearerToken = YOUR_JWT_TOKEN_HERE
+@SessionId = session-checkout-2026
 
-### Get all inventory items
+### 1. Register a Manager user
+POST {{LogiTrack_HostAddress}}/api/auth/register
+Content-Type: application/json
+
+{
+  "username": "manager_samir",
+  "email": "samir@logitrack.io",
+  "password": "ManagerPassword123!",
+  "fullName": "Samir Patel",
+  "fulfillmentCenter": "Warehouse A",
+  "role": "Manager"
+}
+
+### 2. Login and obtain a JWT token
+POST {{LogiTrack_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "username": "manager_samir",
+  "password": "ManagerPassword123!"
+}
+
+### 3. Get all inventory items (Cached for 30s)
 GET {{LogiTrack_HostAddress}}/api/inventory
+Authorization: Bearer {{BearerToken}}
 Accept: application/json
 
-### Create a new inventory item
+### 4. Create a new inventory item (Requires Manager role; invalidates cache)
 POST {{LogiTrack_HostAddress}}/api/inventory
+Authorization: Bearer {{BearerToken}}
 Content-Type: application/json
 
 {
@@ -14,15 +40,10 @@ Content-Type: application/json
   "location": "Warehouse B"
 }
 
-### Delete an inventory item by ID
-DELETE {{LogiTrack_HostAddress}}/api/inventory/2
-
-### Get all orders
-GET {{LogiTrack_HostAddress}}/api/orders
-Accept: application/json
-
-### Create a new order with multiple inventory items
+### 5. Create a new order with session state persistence
 POST {{LogiTrack_HostAddress}}/api/orders
+Authorization: Bearer {{BearerToken}}
+X-Session-Id: {{SessionId}}
 Content-Type: application/json
 
 {
@@ -41,9 +62,21 @@ Content-Type: application/json
   ]
 }
 
-### Get order by ID with items
+### 6. Get order by ID with items
 GET {{LogiTrack_HostAddress}}/api/orders/1
+Authorization: Bearer {{BearerToken}}
 Accept: application/json
 
-### Delete order by ID
+### 7. Get formatted order summary
+GET {{LogiTrack_HostAddress}}/api/orders/1/summary
+Authorization: Bearer {{BearerToken}}
+Accept: application/json
+
+### 8. Rehydrate / fetch orders by persistent session ID
+GET {{LogiTrack_HostAddress}}/api/orders/session/{{SessionId}}
+Authorization: Bearer {{BearerToken}}
+Accept: application/json
+
+### 9. Delete order by ID (Requires Manager role)
 DELETE {{LogiTrack_HostAddress}}/api/orders/1
+Authorization: Bearer {{BearerToken}}

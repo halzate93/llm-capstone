@@ -13,6 +13,18 @@ public class Order
 
     public DateTime DatePlaced { get; set; } = DateTime.UtcNow;
 
+    /// <summary>
+    /// Optional session or cart identifier used to persist and rehydrate order state across client sessions.
+    /// </summary>
+    [MaxLength(100)]
+    public string? SessionId { get; set; }
+
+    /// <summary>
+    /// Identity User ID of the authenticated user who placed or owns the order.
+    /// </summary>
+    [MaxLength(100)]
+    public string? CreatedByUserId { get; set; }
+
     public List<InventoryItem> Items { get; set; } = new();
 
     public void AddItem(InventoryItem item)
