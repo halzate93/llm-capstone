@@ -1,4 +1,5 @@
 using LogiTrack.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -6,6 +7,7 @@ namespace LogiTrack.Controllers;
 
 [ApiController]
 [Route("api/orders")]
+[Authorize]
 public class OrderController : ControllerBase
 {
     private readonly LogiTrackContext _context;
@@ -82,6 +84,7 @@ public class OrderController : ControllerBase
 
     // DELETE: /api/orders/{id}
     [HttpDelete("{id:int}")]
+    [Authorize(Roles = "Manager")]
     public async Task<IActionResult> DeleteOrder(int id)
     {
         var order = await _context.Orders

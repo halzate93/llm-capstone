@@ -1,25 +1,101 @@
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
+using System.Text;
 using LogiTrack;
 using LogiTrack.Models;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var verifyAuth = args.Contains("--verify-auth");
+if (verifyAuth)
+{
+    builder.WebHost.UseTestServer();
+}
 
 // Add services to the container.
 builder.Services.AddDbContext<LogiTrackContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=logitrack.db"));
 
+// Activity 3: Configure ASP.NET Core Identity
+builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
+{
+    options.Password.RequireDigit = true;
+    options.Password.RequireLowercase = true;
+    options.Password.RequireUppercase = true;
+    options.Password.RequireNonAlphanumeric = true;
+    options.Password.RequiredLength = 8;
+    options.User.RequireUniqueEmail = true;
+})
+.AddEntityFrameworkStores<LogiTrackContext>()
+.AddDefaultTokenProviders();
+
+// Activity 3: Configure JWT Bearer Authentication
+var jwtKey = builder.Configuration["Jwt:Key"] ?? "LogiTrack_SuperSecret_SigningKey_2026_AtLeast32Bytes!";
+var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "LogiTrackApi";
+var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "LogiTrackClients";
+
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    options.DefaultScheme = JwtBearerDefaults.AuthenticationScheme;
+})
+.AddJwtBearer(options =>
+{
+    options.TokenValidationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidateAudience = true,
+        ValidateLifetime = true,
+        ValidateIssuerSigningKey = true,
+        ValidIssuer = jwtIssuer,
+        ValidAudience = jwtAudience,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+    };
+});
+
+builder.Services.AddAuthorization();
+
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo { Title = "LogiTrack Order Management API", Version = "v1" });
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Type = SecuritySchemeType.Http,
+        Scheme = "Bearer",
+        BearerFormat = "JWT",
+        In = ParameterLocation.Header,
+        Description = "Enter your JWT token in the format: Bearer {token}"
+    });
+    options.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        {
+            new OpenApiSecurityScheme
+            {
+                Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" }
+            },
+            Array.Empty<string>()
+        }
+    });
+});
 
 var app = builder.Build();
 
-// Activity 1: Seed and test the database & domain models
-using (var context = new LogiTrackContext())
+// Seed database & roles on startup
+using (var scope = app.Services.CreateScope())
 {
+    var context = scope.ServiceProvider.GetRequiredService<LogiTrackContext>();
     context.Database.Migrate();
 
-    // Add test inventory item if none exist
     if (!context.InventoryItems.Any())
     {
         context.InventoryItems.Add(new InventoryItem
@@ -28,81 +104,23 @@ using (var context = new LogiTrackContext())
             Quantity = 12,
             Location = "Warehouse A"
         });
-
         context.SaveChanges();
     }
 
-    // Retrieve and print inventory to confirm
     var items = context.InventoryItems.AsNoTracking().ToList();
     foreach (var item in items)
     {
-        item.DisplayInfo(); // Prints: Item: Pallet Jack | Quantity: 12 | Location: Warehouse A
+        item.DisplayInfo();
     }
-}
 
-// Test Order business logic (AddItem, RemoveItem, GetOrderSummary)
-var testOrder = new Order
-{
-    OrderId = 1001,
-    CustomerName = "Samir",
-    DatePlaced = new DateTime(2025, 4, 5)
-};
-testOrder.AddItem(new InventoryItem { ItemId = 1, Name = "Pallet Jack", Quantity = 2, Location = "Warehouse A" });
-testOrder.AddItem(new InventoryItem { ItemId = 2, Name = "Forklift Strap", Quantity = 5, Location = "Warehouse B" });
-testOrder.AddItem(new InventoryItem { ItemId = 3, Name = "Barcode Scanner", Quantity = 1, Location = "Warehouse A" });
-testOrder.RemoveItem(3);
-Console.WriteLine(testOrder.GetOrderSummary()); // Prints: Order #1001 for Samir | Items: 2 | Placed: 4/5/2025
-
-if (args.Contains("--verify-seed"))
-{
-    return;
-}
-
-if (args.Contains("--verify-api"))
-{
-    using var scope = app.Services.CreateScope();
-    var db = scope.ServiceProvider.GetRequiredService<LogiTrackContext>();
-    var invCtrl = new LogiTrack.Controllers.InventoryController(db);
-    var ordCtrl = new LogiTrack.Controllers.OrderController(db);
-
-    var createdInv = (await invCtrl.CreateInventoryItem(new InventoryItem
+    var roleManager = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
+    foreach (var roleName in new[] { "Manager", "User" })
     {
-        Name = "Forklift",
-        Quantity = 3,
-        Location = "Warehouse B"
-    })).Result as Microsoft.AspNetCore.Mvc.CreatedAtActionResult;
-    var createdItem = (InventoryItem)createdInv!.Value!;
-    Console.WriteLine($"[API Verify] POST /api/inventory -> 201 Created (ItemId={createdItem.ItemId}, Name={createdItem.Name})");
-
-    var listInv = (await invCtrl.GetInventoryItems()).Result as Microsoft.AspNetCore.Mvc.OkObjectResult;
-    var allItems = (IEnumerable<InventoryItem>)listInv!.Value!;
-    Console.WriteLine($"[API Verify] GET /api/inventory -> 200 OK (Count={allItems.Count()})");
-
-    var createdOrd = (await ordCtrl.CreateOrder(new Order
-    {
-        CustomerName = "Acme Logistics",
-        Items = new List<InventoryItem>
+        if (!await roleManager.RoleExistsAsync(roleName))
         {
-            new() { Name = "Conveyor Roller", Quantity = 10, Location = "Warehouse A" },
-            new() { Name = "Safety Vest", Quantity = 20, Location = "Warehouse C" }
+            await roleManager.CreateAsync(new IdentityRole(roleName));
         }
-    })).Result as Microsoft.AspNetCore.Mvc.CreatedAtActionResult;
-    var orderObj = (Order)createdOrd!.Value!;
-    Console.WriteLine($"[API Verify] POST /api/orders -> 201 Created ({orderObj.GetOrderSummary()})");
-
-    var fetchedOrd = (await ordCtrl.GetOrderById(orderObj.OrderId)).Result as Microsoft.AspNetCore.Mvc.OkObjectResult;
-    var fetchedOrderObj = (Order)fetchedOrd!.Value!;
-    Console.WriteLine($"[API Verify] GET /api/orders/{orderObj.OrderId} -> 200 OK (Items={fetchedOrderObj.Items.Count})");
-
-    var delOrd = await ordCtrl.DeleteOrder(orderObj.OrderId) as Microsoft.AspNetCore.Mvc.NoContentResult;
-    Console.WriteLine($"[API Verify] DELETE /api/orders/{orderObj.OrderId} -> {delOrd!.StatusCode} NoContent");
-
-    var notFoundOrd = (await ordCtrl.GetOrderById(orderObj.OrderId)).Result as Microsoft.AspNetCore.Mvc.NotFoundObjectResult;
-    Console.WriteLine($"[API Verify] GET /api/orders/{orderObj.OrderId} (after delete) -> {notFoundOrd!.StatusCode} NotFound");
-
-    var delInv = await invCtrl.DeleteInventoryItem(createdItem.ItemId) as Microsoft.AspNetCore.Mvc.NoContentResult;
-    Console.WriteLine($"[API Verify] DELETE /api/inventory/{createdItem.ItemId} -> {delInv!.StatusCode} NoContent");
-    return;
+    }
 }
 
 // Configure the HTTP request pipeline.
@@ -114,8 +132,76 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
+app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+if (verifyAuth)
+{
+    await app.StartAsync();
+    using var client = app.GetTestClient();
+
+    // 1. Unauthenticated request should return 401
+    var unauthResp = await client.GetAsync("/api/inventory");
+    Console.WriteLine($"[Auth Verify] Unauthenticated GET /api/inventory -> {(int)unauthResp.StatusCode} {unauthResp.StatusCode}");
+
+    // 2. Register standard user and manager user
+    var userEmail = $"user_{Guid.NewGuid():N}@logitrack.io";
+    var userName = $"user_{Guid.NewGuid():N}"[..14];
+    var regUserResp = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+    {
+        Username = userName,
+        Email = userEmail,
+        Password = "UserPass123!",
+        Role = "User"
+    });
+    Console.WriteLine($"[Auth Verify] POST /api/auth/register (User) -> {(int)regUserResp.StatusCode} {regUserResp.StatusCode}");
+
+    var mgrEmail = $"mgr_{Guid.NewGuid():N}@logitrack.io";
+    var mgrName = $"mgr_{Guid.NewGuid():N}"[..14];
+    var regMgrResp = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+    {
+        Username = mgrName,
+        Email = mgrEmail,
+        Password = "ManagerPass123!",
+        Role = "Manager"
+    });
+    Console.WriteLine($"[Auth Verify] POST /api/auth/register (Manager) -> {(int)regMgrResp.StatusCode} {regMgrResp.StatusCode}");
+
+    // 3. Login as standard user
+    var loginUserResp = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest
+    {
+        Username = userName,
+        Password = "UserPass123!"
+    });
+    var userAuth = await loginUserResp.Content.ReadFromJsonAsync<AuthResponse>();
+    Console.WriteLine($"[Auth Verify] POST /api/auth/login (User) -> {(int)loginUserResp.StatusCode} (Token Issued: {!string.IsNullOrEmpty(userAuth?.Token)})");
+
+    // 4. Standard user can GET /api/inventory (200) but cannot POST /api/inventory (403 Forbidden)
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", userAuth!.Token);
+    var userGetResp = await client.GetAsync("/api/inventory");
+    var userPostResp = await client.PostAsJsonAsync("/api/inventory", new InventoryItem { Name = "Forklift", Quantity = 2, Location = "Warehouse B" });
+    Console.WriteLine($"[Auth Verify] User GET /api/inventory -> {(int)userGetResp.StatusCode} {userGetResp.StatusCode}");
+    Console.WriteLine($"[Auth Verify] User POST /api/inventory -> {(int)userPostResp.StatusCode} {userPostResp.StatusCode}");
+
+    // 5. Login as Manager and POST /api/inventory (201 Created)
+    var loginMgrResp = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest
+    {
+        Username = mgrName,
+        Password = "ManagerPass123!"
+    });
+    var mgrAuth = await loginMgrResp.Content.ReadFromJsonAsync<AuthResponse>();
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", mgrAuth!.Token);
+    var mgrPostResp = await client.PostAsJsonAsync("/api/inventory", new InventoryItem { Name = "Reach Truck", Quantity = 4, Location = "Warehouse B" });
+    var createdItem = await mgrPostResp.Content.ReadFromJsonAsync<InventoryItem>();
+    Console.WriteLine($"[Auth Verify] Manager POST /api/inventory -> {(int)mgrPostResp.StatusCode} {mgrPostResp.StatusCode} (ItemId={createdItem?.ItemId})");
+
+    var mgrDelResp = await client.DeleteAsync($"/api/inventory/{createdItem!.ItemId}");
+    Console.WriteLine($"[Auth Verify] Manager DELETE /api/inventory/{createdItem.ItemId} -> {(int)mgrDelResp.StatusCode} {mgrDelResp.StatusCode}");
+
+    await app.StopAsync();
+    return;
+}
 
 app.Run();
