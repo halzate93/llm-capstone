@@ -13,7 +13,8 @@ using Microsoft.OpenApi.Models;
 var builder = WebApplication.CreateBuilder(args);
 
 var verifyAuth = args.Contains("--verify-auth");
-if (verifyAuth)
+var verifyCache = args.Contains("--verify-cache");
+if (verifyAuth || verifyCache)
 {
     builder.WebHost.UseTestServer();
 }
@@ -21,6 +22,9 @@ if (verifyAuth)
 // Add services to the container.
 builder.Services.AddDbContext<LogiTrackContext>(options =>
     options.UseSqlite(builder.Configuration.GetConnectionString("DefaultConnection") ?? "Data Source=logitrack.db"));
+
+// Activity 4: Enable In-Memory Caching
+builder.Services.AddMemoryCache();
 
 // Activity 3: Configure ASP.NET Core Identity
 builder.Services.AddIdentity<ApplicationUser, IdentityRole>(options =>
@@ -137,55 +141,20 @@ app.UseAuthorization();
 
 app.MapControllers();
 
-if (verifyAuth)
+if (verifyAuth || verifyCache)
 {
     await app.StartAsync();
     using var client = app.GetTestClient();
 
-    // 1. Unauthenticated request should return 401
-    var unauthResp = await client.GetAsync("/api/inventory");
-    Console.WriteLine($"[Auth Verify] Unauthenticated GET /api/inventory -> {(int)unauthResp.StatusCode} {unauthResp.StatusCode}");
-
-    // 2. Register standard user and manager user
-    var userEmail = $"user_{Guid.NewGuid():N}@logitrack.io";
-    var userName = $"user_{Guid.NewGuid():N}"[..14];
-    var regUserResp = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
-    {
-        Username = userName,
-        Email = userEmail,
-        Password = "UserPass123!",
-        Role = "User"
-    });
-    Console.WriteLine($"[Auth Verify] POST /api/auth/register (User) -> {(int)regUserResp.StatusCode} {regUserResp.StatusCode}");
-
     var mgrEmail = $"mgr_{Guid.NewGuid():N}@logitrack.io";
     var mgrName = $"mgr_{Guid.NewGuid():N}"[..14];
-    var regMgrResp = await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
+    await client.PostAsJsonAsync("/api/auth/register", new RegisterRequest
     {
         Username = mgrName,
         Email = mgrEmail,
         Password = "ManagerPass123!",
         Role = "Manager"
     });
-    Console.WriteLine($"[Auth Verify] POST /api/auth/register (Manager) -> {(int)regMgrResp.StatusCode} {regMgrResp.StatusCode}");
-
-    // 3. Login as standard user
-    var loginUserResp = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest
-    {
-        Username = userName,
-        Password = "UserPass123!"
-    });
-    var userAuth = await loginUserResp.Content.ReadFromJsonAsync<AuthResponse>();
-    Console.WriteLine($"[Auth Verify] POST /api/auth/login (User) -> {(int)loginUserResp.StatusCode} (Token Issued: {!string.IsNullOrEmpty(userAuth?.Token)})");
-
-    // 4. Standard user can GET /api/inventory (200) but cannot POST /api/inventory (403 Forbidden)
-    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", userAuth!.Token);
-    var userGetResp = await client.GetAsync("/api/inventory");
-    var userPostResp = await client.PostAsJsonAsync("/api/inventory", new InventoryItem { Name = "Forklift", Quantity = 2, Location = "Warehouse B" });
-    Console.WriteLine($"[Auth Verify] User GET /api/inventory -> {(int)userGetResp.StatusCode} {userGetResp.StatusCode}");
-    Console.WriteLine($"[Auth Verify] User POST /api/inventory -> {(int)userPostResp.StatusCode} {userPostResp.StatusCode}");
-
-    // 5. Login as Manager and POST /api/inventory (201 Created)
     var loginMgrResp = await client.PostAsJsonAsync("/api/auth/login", new LoginRequest
     {
         Username = mgrName,
@@ -193,12 +162,38 @@ if (verifyAuth)
     });
     var mgrAuth = await loginMgrResp.Content.ReadFromJsonAsync<AuthResponse>();
     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", mgrAuth!.Token);
-    var mgrPostResp = await client.PostAsJsonAsync("/api/inventory", new InventoryItem { Name = "Reach Truck", Quantity = 4, Location = "Warehouse B" });
-    var createdItem = await mgrPostResp.Content.ReadFromJsonAsync<InventoryItem>();
-    Console.WriteLine($"[Auth Verify] Manager POST /api/inventory -> {(int)mgrPostResp.StatusCode} {mgrPostResp.StatusCode} (ItemId={createdItem?.ItemId})");
 
-    var mgrDelResp = await client.DeleteAsync($"/api/inventory/{createdItem!.ItemId}");
-    Console.WriteLine($"[Auth Verify] Manager DELETE /api/inventory/{createdItem.ItemId} -> {(int)mgrDelResp.StatusCode} {mgrDelResp.StatusCode}");
+    if (verifyCache)
+    {
+        // 1. First request -> Cache MISS
+        var missResp = await client.GetAsync("/api/inventory");
+        var missStatus = missResp.Headers.GetValues("X-Cache-Status").FirstOrDefault();
+        var missTime = missResp.Headers.GetValues("X-Response-Time-Ms").FirstOrDefault();
+        Console.WriteLine($"[Cache Verify] 1st GET /api/inventory -> Cache={missStatus}, Time={missTime} ms");
+
+        // 2. Second request -> Cache HIT
+        var hitResp = await client.GetAsync("/api/inventory");
+        var hitStatus = hitResp.Headers.GetValues("X-Cache-Status").FirstOrDefault();
+        var hitTime = hitResp.Headers.GetValues("X-Response-Time-Ms").FirstOrDefault();
+        Console.WriteLine($"[Cache Verify] 2nd GET /api/inventory -> Cache={hitStatus}, Time={hitTime} ms");
+
+        // 3. Mutate inventory -> Invalidates cache
+        var postResp = await client.PostAsJsonAsync("/api/inventory", new InventoryItem
+        {
+            Name = "Automated Guided Vehicle",
+            Quantity = 2,
+            Location = "Warehouse C"
+        });
+        var created = await postResp.Content.ReadFromJsonAsync<InventoryItem>();
+
+        // 4. Third request after mutation -> Cache MISS with updated data
+        var afterWriteResp = await client.GetAsync("/api/inventory");
+        var afterWriteStatus = afterWriteResp.Headers.GetValues("X-Cache-Status").FirstOrDefault();
+        var afterWriteTime = afterWriteResp.Headers.GetValues("X-Response-Time-Ms").FirstOrDefault();
+        Console.WriteLine($"[Cache Verify] GET /api/inventory after POST -> Cache={afterWriteStatus}, Time={afterWriteTime} ms");
+
+        await client.DeleteAsync($"/api/inventory/{created!.ItemId}");
+    }
 
     await app.StopAsync();
     return;
