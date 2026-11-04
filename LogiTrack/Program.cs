@@ -58,6 +58,53 @@ if (args.Contains("--verify-seed"))
     return;
 }
 
+if (args.Contains("--verify-api"))
+{
+    using var scope = app.Services.CreateScope();
+    var db = scope.ServiceProvider.GetRequiredService<LogiTrackContext>();
+    var invCtrl = new LogiTrack.Controllers.InventoryController(db);
+    var ordCtrl = new LogiTrack.Controllers.OrderController(db);
+
+    var createdInv = (await invCtrl.CreateInventoryItem(new InventoryItem
+    {
+        Name = "Forklift",
+        Quantity = 3,
+        Location = "Warehouse B"
+    })).Result as Microsoft.AspNetCore.Mvc.CreatedAtActionResult;
+    var createdItem = (InventoryItem)createdInv!.Value!;
+    Console.WriteLine($"[API Verify] POST /api/inventory -> 201 Created (ItemId={createdItem.ItemId}, Name={createdItem.Name})");
+
+    var listInv = (await invCtrl.GetInventoryItems()).Result as Microsoft.AspNetCore.Mvc.OkObjectResult;
+    var allItems = (IEnumerable<InventoryItem>)listInv!.Value!;
+    Console.WriteLine($"[API Verify] GET /api/inventory -> 200 OK (Count={allItems.Count()})");
+
+    var createdOrd = (await ordCtrl.CreateOrder(new Order
+    {
+        CustomerName = "Acme Logistics",
+        Items = new List<InventoryItem>
+        {
+            new() { Name = "Conveyor Roller", Quantity = 10, Location = "Warehouse A" },
+            new() { Name = "Safety Vest", Quantity = 20, Location = "Warehouse C" }
+        }
+    })).Result as Microsoft.AspNetCore.Mvc.CreatedAtActionResult;
+    var orderObj = (Order)createdOrd!.Value!;
+    Console.WriteLine($"[API Verify] POST /api/orders -> 201 Created ({orderObj.GetOrderSummary()})");
+
+    var fetchedOrd = (await ordCtrl.GetOrderById(orderObj.OrderId)).Result as Microsoft.AspNetCore.Mvc.OkObjectResult;
+    var fetchedOrderObj = (Order)fetchedOrd!.Value!;
+    Console.WriteLine($"[API Verify] GET /api/orders/{orderObj.OrderId} -> 200 OK (Items={fetchedOrderObj.Items.Count})");
+
+    var delOrd = await ordCtrl.DeleteOrder(orderObj.OrderId) as Microsoft.AspNetCore.Mvc.NoContentResult;
+    Console.WriteLine($"[API Verify] DELETE /api/orders/{orderObj.OrderId} -> {delOrd!.StatusCode} NoContent");
+
+    var notFoundOrd = (await ordCtrl.GetOrderById(orderObj.OrderId)).Result as Microsoft.AspNetCore.Mvc.NotFoundObjectResult;
+    Console.WriteLine($"[API Verify] GET /api/orders/{orderObj.OrderId} (after delete) -> {notFoundOrd!.StatusCode} NotFound");
+
+    var delInv = await invCtrl.DeleteInventoryItem(createdItem.ItemId) as Microsoft.AspNetCore.Mvc.NoContentResult;
+    Console.WriteLine($"[API Verify] DELETE /api/inventory/{createdItem.ItemId} -> {delInv!.StatusCode} NoContent");
+    return;
+}
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {

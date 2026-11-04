@@ -1,6 +1,49 @@
-@LogiTrack_HostAddress = http://localhost:5260
+@LogiTrack_HostAddress = http://localhost:5099
 
-GET {{LogiTrack_HostAddress}}/weatherforecast/
+### Get all inventory items
+GET {{LogiTrack_HostAddress}}/api/inventory
 Accept: application/json
 
-###
+### Create a new inventory item
+POST {{LogiTrack_HostAddress}}/api/inventory
+Content-Type: application/json
+
+{
+  "name": "Heavy Duty Forklift",
+  "quantity": 4,
+  "location": "Warehouse B"
+}
+
+### Delete an inventory item by ID
+DELETE {{LogiTrack_HostAddress}}/api/inventory/2
+
+### Get all orders
+GET {{LogiTrack_HostAddress}}/api/orders
+Accept: application/json
+
+### Create a new order with multiple inventory items
+POST {{LogiTrack_HostAddress}}/api/orders
+Content-Type: application/json
+
+{
+  "customerName": "Acme Logistics",
+  "items": [
+    {
+      "name": "Conveyor Belt Roller",
+      "quantity": 10,
+      "location": "Warehouse A"
+    },
+    {
+      "name": "Safety Helmet",
+      "quantity": 25,
+      "location": "Warehouse C"
+    }
+  ]
+}
+
+### Get order by ID with items
+GET {{LogiTrack_HostAddress}}/api/orders/1
+Accept: application/json
+
+### Delete order by ID
+DELETE {{LogiTrack_HostAddress}}/api/orders/1
